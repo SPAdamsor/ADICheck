@@ -1,0 +1,12 @@
+<attributes>
+	<attr AD="givenname" UPA="FirstName"/>
+	<attr AD="sn" UPA="LastName"/>
+	<attr AD="displayname" UPA="PreferredName"/>
+	<attr AD="sn" UPA="LastName"/>
+	<attr AD="Manager" UPA="Manager"/>
+	<attr AD="telephoneNumber" UPA="WorkPhone"/>
+	<attr AD="mail" UPA="WorkEmail"/>
+	<attr AD="Title" UPA="Title"/>
+	<attr AD="Department" UPA="Department"/>
+	<attr AD="WWWHomePage" UPA="PublicSiteRedirect"/>
+</attributes>	
