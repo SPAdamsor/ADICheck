@@ -42,6 +42,21 @@ if ($cred -eq $null) { $cred=(Get-Credential).GetNetworkCredential() }
 Add-Type -AssemblyName System.DirectoryServices.Protocols
 
 
+$optIn = Read-Host -Prompt "We would like to track usage of this application which includes a hashed representation of your IP address. Is this ok? (y/n)"
+    if($optIn -eq "y"){
+	
+    #This code calls to a Microsoft web endpoint to track how often it is used. 
+    #No data is sent on this call other than the application identifier
+    Add-Type -AssemblyName System.Net.Http
+    $client = New-Object -TypeName System.Net.Http.Httpclient
+    $cont = New-Object -TypeName System.Net.Http.StringContent("", [system.text.encoding]::UTF8, "application/json")
+    $tsk = $client.PostAsync("https://msapptracker.azurewebsites.net/api/Hits/189997b2-5811-490a-b675-7016edc650e1",$cont)
+    #if you want to make sure the call completes, add this to the end of your code
+    #$tsk.Wait()
+
+}
+
+ 
 
 function Dirsync
 {
