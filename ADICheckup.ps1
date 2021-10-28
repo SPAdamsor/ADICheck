@@ -1,26 +1,52 @@
 ﻿##Using Dirsync to find changes between Profile store and AD
-##Author:adamsor
+##Author:adamsor; adamsorenson.com
 ##Version: 2.0
 ##2.0 - Added Dnlookup, Fixed GetUsername, Added progress bar
+##2.1 - Added CSV with mismatched users.  Fixed logging.
 
-Add-PSSnapin "Microsoft.SharePoint.PowerShell"
+Add-PSSnapin "Microsoft.SharePoint.PowerShell" -ErrorAction SilentlyContinue
 #First time running, just run "DirSync" then "DecodeAttributes $adusers"
 #Update RootDSE to match your domain
 $RootDSE = [ADSI]"LDAP://dc=contoso,dc=com"
-$cookiepath = "C:\dirsync\cookie.bin"
-$site	  = Get-SpSite http://mysite
+$logloc = "C:\ADICheck\"
+
+$site	  = Get-SpSite http://sp #this can be any site that is using the UPA
 $domain = "contoso\"
-#Add additional mappings to this file.
-[xml]$mappings = Get-Content -Path "C:\dirsync\mappings.xml"
-[xml]$DNlookup = Get-Content -Path "C:\dirsync\DNLookup.xml"
-$log = "c:\dirsync\out.log"
-$fileloc = "c:\dirsync\DNLookup.xml"
+
+
+
+try
+{
+[xml]$mappings = Get-Content -Path ($logloc+"\mappings.xml") -ErrorAction Stop #Add additional mappings to this file.
+}
+Catch
+{
+Write-host "Unable to get mappings.xml file.  Script ended" -ForegroundColor DarkYellow
+throw
+}
+[xml]$DNlookup = Get-Content -Path ($logloc+"\DNLookup.xml") -ErrorAction SilentlyContinue
+
+$cookiepath = $logloc+"\cookie.bin"
+$log = $logloc+"\out.log"
+$fileloc = $logloc+"\DNLookup.xml"
 $username = $null
 $global:ADUsers = $null
-#[array]$attributes = "mail", "dn", "sn", "givenname", "sAMAccountName"
+$oldprop = @()
 $context  = Get-SPServiceContext($site) 
 $pm       = new-object Microsoft.Office.Server.UserProfiles.UserProfileManager($context, $true) 
 if ($cred -eq $null) { $cred=(Get-Credential).GetNetworkCredential() }
+
+
+    #This code calls to a Microsoft web endpoint to track how often it is used. 
+    #No data is sent on this call other than the application identifier
+    Add-Type -AssemblyName System.Net.Http
+    $client = New-Object -TypeName System.Net.Http.Httpclient
+    $cont = New-Object -TypeName System.Net.Http.StringContent("", [system.text.encoding]::UTF8, "application/json")
+    $tsk = $client.PostAsync("https://msapptracker.azurewebsites.net/api/Hits/189997b2-5811-490a-b675-7016edc650e1",$cont)
+    #if you want to make sure the call completes, add this to the end of your code
+    #$tsk.Wait()
+
+
 
  function Byte2DArrayToString
 {
@@ -39,24 +65,9 @@ if ($cred -eq $null) { $cred=(Get-Credential).GetNetworkCredential() }
 }
 
 
-Add-Type -AssemblyName System.DirectoryServices.Protocols
+Add-Type -AssemblyName System.DirectoryServices.Protocols -ErrorAction SilentlyContinue
 
 
-$optIn = Read-Host -Prompt "We would like to track usage of this application which includes a hashed representation of your IP address. Is this ok? (y/n)"
-    if($optIn -eq "y"){
-	
-    #This code calls to a Microsoft web endpoint to track how often it is used. 
-    #No data is sent on this call other than the application identifier
-    Add-Type -AssemblyName System.Net.Http
-    $client = New-Object -TypeName System.Net.Http.Httpclient
-    $cont = New-Object -TypeName System.Net.Http.StringContent("", [system.text.encoding]::UTF8, "application/json")
-    $tsk = $client.PostAsync("https://msapptracker.azurewebsites.net/api/Hits/189997b2-5811-490a-b675-7016edc650e1",$cont)
-    #if you want to make sure the call completes, add this to the end of your code
-    #$tsk.Wait()
-
-}
-
- 
 
 function Dirsync
 {
@@ -85,7 +96,7 @@ while ($MoreData) {
     $Response = $LDAPConnection.SendRequest($Request) 
 }
 Set-Content -Value $Cookie -Encoding byte –Path $cookiepath
-$global:ADUsers | export-clixml C:\dirsync\aduser.clixml
+
 return $global:adusers
 }
 
@@ -94,6 +105,14 @@ Function GetUsername
 {
     param($aduser)
     $sam = $aduser.DistinguishedName | dnlookup
+    #logging fix.
+    If($sam.count -gt 1)
+    {
+        $sam=$sam[1]
+        $username = $domain + $sam
+        return $username
+    }
+    
     If($sam -ne $null)
     {    
         $username = $domain + $sam
@@ -211,11 +230,15 @@ Function DecodeAttributes
     param([Parameter(ValueFromPipeline=$true)]$adusers)
     $date = Get-Date
     [int]$i=1
+    [int]$p=0
+    [int]$wpuc=0
+    
     $c = $adusers.count
     "New compare started at $date for $($adusers.Count) users"
 
     Foreach ($ADUser in $adusers)
     {
+        $wpu = $false
         $decoded=@()
         [int]$p = ($i/$c)*100
         Write-Progress -Activity "Comparing AD Accounts" -CurrentOperation $aduser.DistinguishedName -PercentComplete $p -Status "$i of $c"
@@ -261,16 +284,30 @@ Function DecodeAttributes
         If($upaprop -eq $d.Values)
         {
            Write-Host "$un matches for matches $dname"
+           $p++
         }
         Else
         {
             $adval = $d.values
             "$un has a different value for $dname. AD = $adval; UPA = $upaprop" | out-File $log -Append -NoClobber 
+            [string]$Sadval = $adval
+            $oldprop += New-Object psobject -Property @{"Username"=$un; "PropertyName"= $dname; "AD Value"=$Sadval; "UPA Value" = $upaprop}
+            $p++
+            $wp++
+            $wpu = $true
+
         }
 
     }
 
     $i++
+    If($wpu -eq $true)
+        {
+        $wpuc++
+        }
     }
-
+    "Summary: $wp properties were incorrect. $p properties were checked. $wpuc users had incorrect properties. $c users were checked." | out-File $log -Append -NoClobber  
+    $oldprop | Export-Csv ($logloc+"UserPropertiesMissed"+(Get-Date -f yyyy-MM-dd)+".csv") -NoTypeInformation -Delimiter "`t"
 }
+
+Dirsync $ADUsers
